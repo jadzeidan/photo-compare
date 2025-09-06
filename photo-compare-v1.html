@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Spot the Difference – Camera MVP</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial; }
+    body { margin: 0; background:#0b0d10; color:#e7ecef; display:grid; min-height:100dvh; }
+    header { padding: 16px; border-bottom:1px solid #1c222b; background:#0f1217; position:sticky; top:0; z-index:2; }
+    main { display:grid; gap:16px; padding:16px; grid-template-columns: 1fr; max-width: 1100px; width: 100%; margin: 0 auto; }
+    .panel { background:#0f1217; border:1px solid #1c222b; border-radius:14px; padding:16px; }
+    .row { display:flex; gap:12px; flex-wrap: wrap; align-items:center; }
+    video, canvas { width:100%; max-height: 60vh; border-radius:12px; background:#0b0d10; }
+    .controls button, .controls label { background:#1a2433; border:1px solid #2a374a; color:#e7ecef; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:600; }
+    .controls button:hover, .controls label:hover { background:#213149; }
+    .pill { display:inline-flex; gap:8px; align-items:center; padding:8px 12px; border-radius:999px; background:#142034; border:1px solid #203149; }
+    .grid { display:grid; gap:16px; grid-template-columns: 1fr; }
+    @media (min-width: 900px) {
+      .grid { grid-template-columns: 1fr 1fr; }
+    }
+    .score { font-weight:700; }
+    .hint { color:#9fb3c8; font-size: 0.9rem; }
+    .danger { color:#ff5d5d; }
+    .ok { color:#8dff9b; }
+    .overlay-toggle { margin-left: auto; }
+    .small { font-size: 0.85rem; opacity: .85; }
+    input[type="range"] { width: 180px; }
+    .muted { color:#b8c7d6; }
+    .footer { text-align:center; padding:12px 16px 24px; color:#789; }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+  <header class="row">
+    <div class="pill">📸 Spot the Difference</div>
+    <div class="overlay-toggle row">
+      <label class="small muted">Threshold <input id="threshold" type="range" min="5" max="80" value="20"></label>
+      <label class="small muted">Blur <input id="blur" type="range" min="0" max="6" value="2"></label>
+      <label class="small muted">Overlay <input id="showOverlay" type="checkbox" checked></label>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel grid">
+      <div>
+        <h3>Live Camera / Upload</h3>
+        <div class="hint">Grant camera permission, frame your subject, and capture.</div>
+        <video id="video" playsinline autoplay muted></video>
+        <div class="controls row" style="margin-top:12px;">
+          <button id="btnCapture">Capture Frame</button>
+          <button id="btnBaseline">Set as Baseline</button>
+          <label for="fileInput">Upload Photo</label>
+          <input class="hidden" id="fileInput" type="file" accept="image/*" capture="environment" />
+          <span class="small muted">Baseline is stored locally in your browser.</span>
+        </div>
+      </div>
+      <div>
+        <h3>Result</h3>
+        <div class="hint">Left: baseline; Right: comparison with diff overlay.</div>
+        <div class="grid" style="grid-template-columns: 1fr 1fr;">
+          <canvas id="canvasBase"></canvas>
+          <div>
+            <canvas id="canvasNew"></canvas>
+            <canvas id="canvasOverlay" style="position:relative; margin-top:-100%; pointer-events:none; mix-blend-mode:screen; opacity:.9;"></canvas>
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px;">
+          <div>Change score: <span id="score" class="score">–</span></div>
+          <button id="btnCompare">Compare Current → Baseline</button>
+          <button id="btnClear">Clear Baseline</button>
+        </div>
+        <div id="status" class="hint" style="margin-top:8px;"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>Tips</h3>
+      <ul class="hint">
+        <li>Keep the camera as steady as possible; large perspective changes reduce accuracy.</li>
+        <li>Use good, even lighting for best results.</li>
+        <li>If alignment shifts, try moving a bit closer/farther or re-set the baseline.</li>
+      </ul>
+    </section>
+
+    <div class="footer small">Local-only demo. No images leave your device.</div>
+  </main>
+
+<script>
+/* ====== Utilities: IndexedDB (tiny wrapper) ====== */
+const DB_NAME = 'spotdiff-db';
+const DB_STORE = 'kv';
+function idb() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(DB_STORE);
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function idbSet(key, value) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).put(value, key);
+    tx.oncomplete = () => res(true);
+    tx.onerror = () => rej(tx.error);
+  });
+}
+async function idbGet(key) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(DB_STORE, 'readonly');
+    const req = tx.objectStore(DB_STORE).get(key);
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+async function idbDel(key) {
+  const db = await idb();
+  return new Promise((res, rej) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).delete(key);
+    tx.oncomplete = () => res(true);
+    tx.onerror = () => rej(tx.error);
+  });
+}
+
+/* ====== DOM ====== */
+const video = document.getElementById('video');
+const fileInput = document.getElementById('fileInput');
+const canvasBase = document.getElementById('canvasBase');
+const canvasNew = document.getElementById('canvasNew');
+const canvasOverlay = document.getElementById('canvasOverlay');
+const btnCapture = document.getElementById('btnCapture');
+const btnBaseline = document.getElementById('btnBaseline');
+const btnCompare = document.getElementById('btnCompare');
+const btnClear = document.getElementById('btnClear');
+const statusEl = document.getElementById('status');
+const scoreEl = document.getElementById('score');
+const thresholdEl = document.getElementById('threshold');
+const blurEl = document.getElementById('blur');
+const showOverlayEl = document.getElementById('showOverlay');
+
+let lastCaptureDataUrl = null;
+let baseDataUrl = null;
+
+/* ====== Camera init with graceful fallback ====== */
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+    status('Camera ready.');
+  } catch (e) {
+    status('Camera unavailable. Use file upload instead.', true);
+  }
+}
+
+/* ====== Canvas helpers ====== */
+function drawImageToCanvas(img, canvas, maxW=1280) {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const scale = Math.min(1, maxW / img.width);
+  const w = Math.round(img.width * scale);
+  const h = Math.round(img.height * scale);
+  canvas.width = w; canvas.height = h;
+  ctx.drawImage(img, 0, 0, w, h);
+}
+function dataUrlFromVideo(v) {
+  const tmp = document.createElement('canvas');
+  const vw = v.videoWidth || 1280, vh = v.videoHeight || 720;
+  const maxW = 1280, scale = Math.min(1, maxW / vw);
+  tmp.width = Math.round(vw * scale); tmp.height = Math.round(vh * scale);
+  tmp.getContext('2d').drawImage(v, 0, 0, tmp.width, tmp.height);
+  return tmp.toDataURL('image/jpeg', 0.92);
+}
+function loadDataUrl(url) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => res(img);
+    img.onerror = rej;
+    img.src = url;
+  });
+}
+
+/* ====== Diff computation (fast pixel diff with smoothing) ======
+  Steps:
+  1) Convert to same size, compute per-pixel absolute RGB difference.
+  2) Collapse to luminance-like value and threshold.
+  3) Simple box blur (N passes) to remove isolated noise.
+  4) Render overlay heatmap + compute % changed.
+  Note: For real-world alignment, use feature-based alignment (OpenCV.js) later.
+*/
+function boxBlurGray(gray, w, h, radius) {
+  if (radius <= 0) return gray;
+  const out = new Uint8ClampedArray(gray.length);
+  const tmp = new Uint16Array(gray.length);
+  const r = radius, size = r*2+1;
+
+  // horizontal
+  for (let y=0; y<h; y++) {
+    let acc = 0;
+    let idx = y*w;
+    for (let x=0; x<w; x++) {
+      const add = gray[idx + Math.min(w-1, x+r)];
+      const rmv = gray[idx + Math.max(0, x-r-1)];
+      acc += add - rmv;
+      tmp[idx + x] = acc;
+    }
+    for (let x=0; x<w; x++) {
+      const L = Math.max(0, x-r);
+      const R = Math.min(w-1, x+r);
+      out[idx + x] = Math.round((tmp[idx + R] - (L>0 ? tmp[idx + L-1] : 0)) / size);
+    }
+  }
+
+  // vertical
+  const out2 = new Uint8ClampedArray(gray.length);
+  for (let x=0; x<w; x++) {
+    let acc = 0;
+    for (let y=0; y<h; y++) {
+      const add = out[Math.min(h-1, y+r)*w + x];
+      const rmv = out[Math.max(0, y-r-1)*w + x];
+      acc += add - rmv;
+      tmp[y*w + x] = acc;
+    }
+    for (let y=0; y<h; y++) {
+      const T = Math.max(0, y-r);
+      const B = Math.min(h-1, y+r);
+      out2[y*w + x] = Math.round((tmp[B*w + x] - (T>0 ? tmp[(T-1)*w + x] : 0)) / size);
+    }
+  }
+  return out2;
+}
+
+function computeDiff(baseCtx, newCtx, overlayCtx, threshold=20, blurRadius=2) {
+  const w = baseCtx.canvas.width, h = baseCtx.canvas.height;
+  if (w !== newCtx.canvas.width || h !== newCtx.canvas.height) {
+    status('Sizes differ; resizing comparison image to baseline.', true);
+    const imgData = newCtx.getImageData(0,0,newCtx.canvas.width,newCtx.canvas.height);
+    const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h;
+    tmp.getContext('2d').putImageData(imgData, 0, 0);
+  }
+  const base = baseCtx.getImageData(0,0,w,h);
+  const cur  = newCtx.getImageData(0,0,w,h);
+
+  // abs diff -> grayscale energy
+  const diffGray = new Uint8ClampedArray(w*h);
+  let idx=0;
+  for (let i=0; i<base.data.length; i+=4) {
+    const dr = Math.abs(cur.data[i]   - base.data[i]);
+    const dg = Math.abs(cur.data[i+1] - base.data[i+1]);
+    const db = Math.abs(cur.data[i+2] - base.data[i+2]);
+    // perceptual-ish luminance weighting
+    const d = (0.299*dr + 0.587*dg + 0.114*db);
+    diffGray[idx++] = d;
+  }
+
+  // blur to suppress speckle noise
+  const blurred = boxBlurGray(diffGray, w, h, blurRadius|0);
+
+  // threshold + overlay render
+  const maskData = overlayCtx.createImageData(w, h);
+  let changed = 0;
+  for (let p=0, q=0; p<blurred.length; p++, q+=4) {
+    const v = blurred[p] >= threshold ? 255 : 0;
+    if (v) changed++;
+    // heatmap-ish red overlay (semi transparent)
+    maskData.data[q]   = v;     // R
+    maskData.data[q+1] = 0;     // G
+    maskData.data[q+2] = 0;     // B
+    maskData.data[q+3] = v ? 140 : 0; // A
+  }
+  overlayCtx.putImageData(maskData, 0, 0);
+
+  const pct = (changed / (w*h)) * 100;
+  return pct;
+}
+
+/* ====== UI glue ====== */
+function status(msg, warn=false) {
+  statusEl.textContent = msg;
+  statusEl.className = 'hint ' + (warn ? 'danger' : '');
+}
+function setScore(pct) {
+  const fmt = pct.toFixed(pct < 10 ? 2 : 1) + '%';
+  scoreEl.textContent = fmt;
+  scoreEl.className = 'score ' + (pct > 5 ? 'danger' : 'ok');
+}
+
+async function refreshBaselineCanvas() {
+  baseDataUrl = await idbGet('baseline');
+  if (!baseDataUrl) { status('No baseline stored yet.'); canvasBase.getContext('2d').clearRect(0,0,canvasBase.width,canvasBase.height); return; }
+  const img = await loadDataUrl(baseDataUrl);
+  drawImageToCanvas(img, canvasBase);
+  status('Baseline loaded.');
+}
+
+async function setBaselineFromDataUrl(url) {
+  await idbSet('baseline', url);
+  await refreshBaselineCanvas();
+}
+
+async function captureToNewCanvas(durl) {
+  const img = await loadDataUrl(durl);
+  drawImageToCanvas(img, canvasNew);
+  // match overlay size to new canvas (which matches baseline)
+  canvasOverlay.width = canvasNew.width;
+  canvasOverlay.height = canvasNew.height;
+  const show = showOverlayEl.checked;
+  canvasOverlay.style.display = show ? 'block' : 'none';
+}
+
+btnCapture.addEventListener('click', async () => {
+  if (video.readyState >= 2 && video.videoWidth) {
+    lastCaptureDataUrl = dataUrlFromVideo(video);
+    await captureToNewCanvas(lastCaptureDataUrl);
+    status('Captured current frame.');
+  } else {
+    status('Camera not ready. Try upload.', true);
+  }
+});
+
+fileInput.addEventListener('change', async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    lastCaptureDataUrl = reader.result;
+    await captureToNewCanvas(lastCaptureDataUrl);
+    status('Loaded uploaded image.');
+  };
+  reader.readAsDataURL(file);
+});
+
+btnBaseline.addEventListener('click', async () => {
+  if (!lastCaptureDataUrl) { status('Capture or upload a photo first.', true); return; }
+  await setBaselineFromDataUrl(lastCaptureDataUrl);
+  status('Baseline set.');
+});
+
+btnClear.addEventListener('click', async () => {
+  await idbDel('baseline'); baseDataUrl = null;
+  canvasBase.getContext('2d').clearRect(0,0,canvasBase.width,canvasBase.height);
+  setScore(0); status('Baseline cleared.');
+});
+
+btnCompare.addEventListener('click', async () => {
+  const threshold = +thresholdEl.value;
+  const blur = +blurEl.value;
+  if (!baseDataUrl) { status('No baseline found. Set one first.', true); return; }
+  if (!lastCaptureDataUrl) { status('No current photo to compare. Capture/upload one.', true); return; }
+
+  // Ensure both canvases are same size by drawing both to baseline size
+  const baseImg = await loadDataUrl(baseDataUrl);
+  const curImg  = await loadDataUrl(lastCaptureDataUrl);
+  // Force same target size (use baseline size)
+  drawImageToCanvas(baseImg, canvasBase);
+  drawImageToCanvas(curImg, canvasNew, canvasBase.width);
+
+  canvasOverlay.width = canvasNew.width;
+  canvasOverlay.height = canvasNew.height;
+  const baseCtx = canvasBase.getContext('2d', { willReadFrequently: true });
+  const newCtx  = canvasNew.getContext('2d', { willReadFrequently: true });
+  const overlayCtx = canvasOverlay.getContext('2d');
+
+  const pct = computeDiff(baseCtx, newCtx, overlayCtx, threshold, blur);
+  setScore(pct);
+  canvasOverlay.style.display = showOverlayEl.checked ? 'block' : 'none';
+  status('Comparison done.');
+});
+
+thresholdEl.addEventListener('input', () => {
+  if (baseDataUrl && lastCaptureDataUrl) btnCompare.click();
+});
+blurEl.addEventListener('input', () => {
+  if (baseDataUrl && lastCaptureDataUrl) btnCompare.click();
+});
+showOverlayEl.addEventListener('change', () => {
+  canvasOverlay.style.display = showOverlayEl.checked ? 'block' : 'none';
+});
+
+startCamera();
+refreshBaselineCanvas();
+</script>
+</body>
+</html>
