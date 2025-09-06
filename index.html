@@ -3,388 +3,349 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Spot the Difference – Camera MVP</title>
+  <title>Spot the Difference — Snapshots</title>
   <style>
-    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial; }
-    body { margin: 0; background:#0b0d10; color:#e7ecef; display:grid; min-height:100dvh; }
-    header { padding: 16px; border-bottom:1px solid #1c222b; background:#0f1217; position:sticky; top:0; z-index:2; }
-    main { display:grid; gap:16px; padding:16px; grid-template-columns: 1fr; max-width: 1100px; width: 100%; margin: 0 auto; }
-    .panel { background:#0f1217; border:1px solid #1c222b; border-radius:14px; padding:16px; }
-    .row { display:flex; gap:12px; flex-wrap: wrap; align-items:center; }
-    video, canvas { width:100%; max-height: 60vh; border-radius:12px; background:#0b0d10; }
-    .controls button, .controls label { background:#1a2433; border:1px solid #2a374a; color:#e7ecef; padding:10px 14px; border-radius:10px; cursor:pointer; font-weight:600; }
-    .controls button:hover, .controls label:hover { background:#213149; }
-    .pill { display:inline-flex; gap:8px; align-items:center; padding:8px 12px; border-radius:999px; background:#142034; border:1px solid #203149; }
-    .grid { display:grid; gap:16px; grid-template-columns: 1fr; }
-    @media (min-width: 900px) {
-      .grid { grid-template-columns: 1fr 1fr; }
-    }
-    .score { font-weight:700; }
-    .hint { color:#9fb3c8; font-size: 0.9rem; }
-    .danger { color:#ff5d5d; }
+    :root { color-scheme: dark; --bg:#0b0d10; --panel:#10141b; --line:#1e2733; --txt:#e7ecef; --muted:#9fb3c8; }
+    html,body{height:100%}
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Helvetica Neue", Arial; background:var(--bg); color:var(--txt); display:flex; flex-direction:column; }
+    header { position:sticky; top:0; z-index:5; background:rgba(16,20,27,.85); backdrop-filter:saturate(180%) blur(10px); border-bottom:1px solid var(--line); }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 16px; }
+    h1 { font-size: 1.15rem; margin:0; }
+    main { flex:1; }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; }
+    .grid { display:grid; gap:16px; }
+    .grid-2 { grid-template-columns:1fr; }
+    @media (min-width: 900px) { .grid-2 { grid-template-columns: 1fr 1fr; } }
+    .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+    .btn { background:#1a2433; border:1px solid #2a374a; color:var(--txt); padding:12px 16px; border-radius:12px; font-weight:700; cursor:pointer; }
+    .btn:disabled { opacity:.5; cursor:not-allowed; }
+    .btn:hover { background:#22314a; }
+    .btn.ghost { background:transparent; }
+    .muted { color:var(--muted); }
+    .list { display:grid; gap:10px; }
+    .item { display:flex; justify-content:space-between; align-items:center; padding:12px 14px; border:1px solid var(--line); border-radius:12px; background:#0f131a; }
+    a.item { color:inherit; text-decoration:none; }
+    .pill { padding:6px 10px; border:1px solid var(--line); border-radius:999px; font-size:.8rem; color:var(--muted); }
+    video, img, canvas { width:100%; border-radius:12px; background:#0b0f15; }
+    footer { text-align:center; color:#7f8da0; padding:16px; }
+    .cta { display:flex; gap:12px; align-items:center; }
+    .danger { color:#ff7b7b; }
     .ok { color:#8dff9b; }
-    .overlay-toggle { margin-left: auto; }
-    .small { font-size: 0.85rem; opacity: .85; }
-    input[type="range"] { width: 180px; }
-    .muted { color:#b8c7d6; }
-    .footer { text-align:center; padding:12px 16px 24px; color:#789; }
-    .hidden { display:none; }
+    .spacer { height:8px; }
+    .hidden { display:none !important; }
   </style>
 </head>
 <body>
-  <header class="row">
-    <div class="pill">📸 Spot the Difference</div>
-    <div class="overlay-toggle row">
-      <label class="small muted">Threshold <input id="threshold" type="range" min="5" max="80" value="20"></label>
-      <label class="small muted">Blur <input id="blur" type="range" min="0" max="6" value="2"></label>
-      <label class="small muted">Overlay <input id="showOverlay" type="checkbox" checked></label>
+  <header>
+    <div class="wrap row">
+      <h1>📸 Spot the Difference</h1>
+      <span class="pill">Local only</span>
+      <span id="hdrStatus" class="muted" style="margin-left:auto"></span>
     </div>
   </header>
 
-  <main>
-    <section class="panel grid">
-      <div>
-        <h3>Live Camera / Upload</h3>
-        <div class="hint">Grant camera permission, frame your subject, and capture.</div>
-        <video id="video" playsinline autoplay muted></video>
-        <div class="controls row" style="margin-top:12px;">
-          <button id="btnCapture">Capture Frame</button>
-          <button id="btnBaseline">Set as Baseline</button>
-          <label for="fileInput">Upload Photo</label>
-          <input class="hidden" id="fileInput" type="file" accept="image/*" capture="environment" />
-          <span class="small muted">Baseline is stored locally in your browser.</span>
-        </div>
-      </div>
-      <div>
-        <h3>Result</h3>
-        <div class="hint">Left: baseline; Right: comparison with diff overlay.</div>
-        <div class="grid" style="grid-template-columns: 1fr 1fr;">
-          <canvas id="canvasBase"></canvas>
+  <main class="wrap">
+    <!-- HOME VIEW -->
+    <section id="view-home" class="grid">
+      <div class="panel">
+        <h2>Create snapshot</h2>
+        <p class="muted">Capture a baseline photo. It’ll be saved locally and appear below.</p>
+        <div class="grid-2 grid">
           <div>
-            <canvas id="canvasNew"></canvas>
-            <canvas id="canvasOverlay" style="position:relative; margin-top:-100%; pointer-events:none; mix-blend-mode:screen; opacity:.9;"></canvas>
+            <video id="homeVideo" playsinline autoplay muted></video>
+            <div class="spacer"></div>
+            <div class="row">
+              <button class="btn" id="btnCreateSnapshot">Create Snapshot</button>
+              <label class="btn ghost" for="homeUpload">Upload instead</label>
+              <input id="homeUpload" class="hidden" type="file" accept="image/*" capture="environment" />
+              <button class="btn ghost" id="btnRestartCamHome">Restart Camera</button>
+            </div>
+            <p id="homeHint" class="muted"></p>
+          </div>
+          <div>
+            <canvas id="homePreview"></canvas>
+            <p class="muted">Last captured frame preview.</p>
           </div>
         </div>
-        <div class="row" style="margin-top:12px;">
-          <div>Change score: <span id="score" class="score">–</span></div>
-          <button id="btnCompare">Compare Current → Baseline</button>
-          <button id="btnClear">Clear Baseline</button>
-        </div>
-        <div id="status" class="hint" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Snapshots</h2>
+        <div id="emptyState" class="muted">No snapshots yet. Create one above.</div>
+        <div id="snapshotList" class="list"></div>
       </div>
     </section>
 
-    <section class="panel">
-      <h3>Tips</h3>
-      <ul class="hint">
-        <li>Keep the camera as steady as possible; large perspective changes reduce accuracy.</li>
-        <li>Use good, even lighting for best results.</li>
-        <li>If alignment shifts, try moving a bit closer/farther or re-set the baseline.</li>
-      </ul>
-    </section>
+    <!-- DETAIL VIEW -->
+    <section id="view-detail" class="grid hidden">
+      <div class="panel">
+        <button class="btn ghost" id="btnBack">← Back</button>
+        <h2 id="detailTitle">Snapshot</h2>
+        <p class="muted">Baseline preview:</p>
+        <img id="baselineImg" alt="Baseline preview" />
+        <div class="spacer"></div>
+        <div class="cta">
+          <button class="btn" id="btnCompare">Compare</button>
+          <label class="btn ghost" for="detailUpload">Upload instead</label>
+          <input id="detailUpload" class="hidden" type="file" accept="image/*" capture="environment" />
+          <button class="btn ghost" id="btnRestartCamDetail">Restart Camera</button>
+        </div>
+        <p id="detailHint" class="muted"></p>
+        <video id="detailVideo" class="hidden" playsinline autoplay muted></video>
+      </div>
 
-    <div class="footer small">Local-only demo. No images leave your device.</div>
+      <div class="panel">
+        <h3>Result</h3>
+        <p class="muted">After taking a new photo, this area flips between baseline and the new photo every second.</p>
+        <img id="flipView" alt="Flip view" />
+        <div class="spacer"></div>
+        <div class="row">
+          <button class="btn" id="btnStartFlip" disabled>Start Flip</button>
+          <button class="btn ghost" id="btnStopFlip" disabled>Stop</button>
+          <span id="flipStatus" class="muted"></span>
+        </div>
+      </div>
+    </section>
   </main>
 
-<script>
-/* ====== Utilities: IndexedDB (tiny wrapper) ====== */
-const DB_NAME = 'spotdiff-db';
-const DB_STORE = 'kv';
-function idb() {
-  return new Promise((res, rej) => {
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => req.result.createObjectStore(DB_STORE);
-    req.onsuccess = () => res(req.result);
-    req.onerror = () => rej(req.error);
-  });
-}
-async function idbSet(key, value) {
-  const db = await idb();
-  return new Promise((res, rej) => {
-    const tx = db.transaction(DB_STORE, 'readwrite');
-    tx.objectStore(DB_STORE).put(value, key);
-    tx.oncomplete = () => res(true);
-    tx.onerror = () => rej(tx.error);
-  });
-}
-async function idbGet(key) {
-  const db = await idb();
-  return new Promise((res, rej) => {
-    const tx = db.transaction(DB_STORE, 'readonly');
-    const req = tx.objectStore(DB_STORE).get(key);
-    req.onsuccess = () => res(req.result);
-    req.onerror = () => rej(req.error);
-  });
-}
-async function idbDel(key) {
-  const db = await idb();
-  return new Promise((res, rej) => {
-    const tx = db.transaction(DB_STORE, 'readwrite');
-    tx.objectStore(DB_STORE).delete(key);
-    tx.oncomplete = () => res(true);
-    tx.onerror = () => rej(tx.error);
-  });
-}
+  <footer>All data is stored in your browser (IndexedDB). Nothing is uploaded.</footer>
 
-/* ====== DOM ====== */
-const video = document.getElementById('video');
-const fileInput = document.getElementById('fileInput');
-const canvasBase = document.getElementById('canvasBase');
-const canvasNew = document.getElementById('canvasNew');
-const canvasOverlay = document.getElementById('canvasOverlay');
-const btnCapture = document.getElementById('btnCapture');
-const btnBaseline = document.getElementById('btnBaseline');
-const btnCompare = document.getElementById('btnCompare');
-const btnClear = document.getElementById('btnClear');
-const statusEl = document.getElementById('status');
-const scoreEl = document.getElementById('score');
-const thresholdEl = document.getElementById('threshold');
-const blurEl = document.getElementById('blur');
-const showOverlayEl = document.getElementById('showOverlay');
-
-let lastCaptureDataUrl = null;
-let baseDataUrl = null;
-
-/* ====== Camera init with graceful fallback ====== */
-async function startCamera() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false
+  <script>
+  /************ IndexedDB (snapshots store) ************/
+  const DB_NAME='spotdiff-db-v2';
+  const STORE='snapshots';
+  function dbOpen(){
+    return new Promise((res,rej)=>{
+      const req=indexedDB.open(DB_NAME,2);
+      req.onupgradeneeded=()=> {
+        const db=req.result;
+        if(!db.objectStoreNames.contains(STORE)){
+          const os=db.createObjectStore(STORE,{keyPath:'id',autoIncrement:true});
+          os.createIndex('createdAt','createdAt');
+        }
+      };
+      req.onsuccess=()=>res(req.result);
+      req.onerror=()=>rej(req.error);
     });
-    video.srcObject = stream;
-    await video.play();
-    status('Camera ready.');
-  } catch (e) {
-    status('Camera unavailable. Use file upload instead.', true);
   }
-}
+  async function dbAddSnapshot(snap){ const db=await dbOpen(); return new Promise((res,rej)=>{ const tx=db.transaction(STORE,'readwrite'); tx.objectStore(STORE).add(snap).onsuccess=e=>res(e.target.result); tx.onerror=()=>rej(tx.error); }); }
+  async function dbListSnapshots(){ const db=await dbOpen(); return new Promise((res,rej)=>{ const tx=db.transaction(STORE,'readonly'); const req=tx.objectStore(STORE).getAll(); req.onsuccess=()=>res(req.result.sort((a,b)=>b.createdAt-a.createdAt)); req.onerror=()=>rej(req.error); }); }
+  async function dbGetSnapshot(id){ const db=await dbOpen(); return new Promise((res,rej)=>{ const tx=db.transaction(STORE,'readonly'); const req=tx.objectStore(STORE).get(Number(id)); req.onsuccess=()=>res(req.result||null); req.onerror=()=>rej(req.error); }); }
 
-/* ====== Canvas helpers ====== */
-function drawImageToCanvas(img, canvas, maxW=1280) {
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  const scale = Math.min(1, maxW / img.width);
-  const w = Math.round(img.width * scale);
-  const h = Math.round(img.height * scale);
-  canvas.width = w; canvas.height = h;
-  ctx.drawImage(img, 0, 0, w, h);
-}
-function dataUrlFromVideo(v) {
-  const tmp = document.createElement('canvas');
-  const vw = v.videoWidth || 1280, vh = v.videoHeight || 720;
-  const maxW = 1280, scale = Math.min(1, maxW / vw);
-  tmp.width = Math.round(vw * scale); tmp.height = Math.round(vh * scale);
-  tmp.getContext('2d').drawImage(v, 0, 0, tmp.width, tmp.height);
-  return tmp.toDataURL('image/jpeg', 0.92);
-}
-function loadDataUrl(url) {
-  return new Promise((res, rej) => {
-    const img = new Image();
-    img.onload = () => res(img);
-    img.onerror = rej;
-    img.src = url;
+  /************ Utilities ************/
+  const $=sel=>document.querySelector(sel);
+  const fmtDate=ms=>new Date(ms).toLocaleString([], { year:'numeric', month:'short', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+  function drawToCanvas(img, canvas, maxW=1400){ const ctx=canvas.getContext('2d'); const scale=Math.min(1, maxW/img.width); canvas.width=Math.round(img.width*scale); canvas.height=Math.round(img.height*scale); ctx.drawImage(img,0,0,canvas.width,canvas.height); }
+  function loadDataUrl(url){ return new Promise((res,rej)=>{ const img=new Image(); img.onload=()=>res(img); img.onerror=rej; img.src=url; }); }
+  function dataUrlFromVideo(video){ const w=video.videoWidth||1280,h=video.videoHeight||720; const c=document.createElement('canvas'); const maxW=1400, scale=Math.min(1,maxW/w); c.width=Math.round(w*scale); c.height=Math.round(h*scale); c.getContext('2d').drawImage(video,0,0,c.width,c.height); return c.toDataURL('image/jpeg',0.92); }
+
+  async function startCamera(elVideo){
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720} }, audio:false });
+      elVideo.classList.remove('hidden');
+      elVideo.srcObject=stream; await elVideo.play();
+      setHdr('Camera ready.');
+    }catch(e){
+      setHdr('Camera unavailable. Use Upload instead.');
+    }
+  }
+  function stopCamera(elVideo){
+    try{ elVideo.srcObject?.getTracks().forEach(t=>t.stop()); }catch{}
+    elVideo.srcObject=null;
+  }
+  function setHdr(msg){ $('#hdrStatus').textContent=msg; }
+  function setHint(el,msg){ el.textContent=msg; }
+
+  /************ Simple hash router ************/
+  function goHome(){ location.hash='#/'; }
+  function goDetail(id){ location.hash=`#/snapshot/${id}`; }
+  function parseRoute(){
+    const h=location.hash||'#/'; const m=h.match(/^#\/snapshot\/(\d+)/);
+    return m?{view:'detail', id:Number(m[1])}:{view:'home'};
+  }
+
+  /************ State ************/
+  let homeLastDataUrl=null;
+  let flipTimer=null;
+  let currentDetail=null; // { id, createdAt, dataUrl }
+  let compareDataUrl=null;
+
+  /************ DOM refs ************/
+  const viewHome = $('#view-home');
+  const viewDetail = $('#view-detail');
+  const homeVideo = $('#homeVideo');
+  const homeUpload = $('#homeUpload');
+  const homePreview = $('#homePreview');
+  const homeHint = $('#homeHint');
+  const btnCreateSnapshot = $('#btnCreateSnapshot');
+  const btnRestartCamHome = $('#btnRestartCamHome');
+  const listEl = $('#snapshotList');
+  const emptyState = $('#emptyState');
+
+  const btnBack = $('#btnBack');
+  const detailTitle = $('#detailTitle');
+  const baselineImg = $('#baselineImg');
+  const detailVideo = $('#detailVideo');
+  const detailUpload = $('#detailUpload');
+  const btnCompare = $('#btnCompare');
+  const btnRestartCamDetail = $('#btnRestartCamDetail');
+  const detailHint = $('#detailHint');
+
+  const flipView = $('#flipView');
+  const btnStartFlip = $('#btnStartFlip');
+  const btnStopFlip = $('#btnStopFlip');
+  const flipStatus = $('#flipStatus');
+
+  /************ Home view logic ************/
+  async function refreshList(){
+    const snaps = await dbListSnapshots();
+    listEl.innerHTML='';
+    if(!snaps.length){ emptyState.classList.remove('hidden'); return; }
+    emptyState.classList.add('hidden');
+    for(const s of snaps){
+      const a=document.createElement('a');
+      a.href=`#/snapshot/${s.id}`;
+      a.className='item';
+      a.innerHTML=`<span>📌 Snapshot <strong>#${s.id}</strong></span><span class="muted">${fmtDate(s.createdAt)}</span>`;
+      listEl.appendChild(a);
+    }
+  }
+  async function showHome(){
+    viewHome.classList.remove('hidden');
+    viewDetail.classList.add('hidden');
+    await startCamera(homeVideo);
+    refreshList();
+    setHint(homeHint,'Tap “Create Snapshot” to save the current frame.');
+  }
+  function hideHome(){ stopCamera(homeVideo); }
+
+  btnCreateSnapshot.addEventListener('click', async ()=>{
+    if (!homeLastDataUrl){
+      if (homeVideo.readyState>=2 && homeVideo.videoWidth){
+        homeLastDataUrl = dataUrlFromVideo(homeVideo);
+        const img = await loadDataUrl(homeLastDataUrl);
+        drawToCanvas(img, homePreview);
+      } else {
+        setHint(homeHint,'Camera not ready. Use Upload instead.');
+        return;
+      }
+    }
+    const id = await dbAddSnapshot({ createdAt: Date.now(), dataUrl: homeLastDataUrl });
+    homeLastDataUrl = null;
+    homePreview.getContext('2d')?.clearRect(0,0,homePreview.width,homePreview.height);
+    await refreshList();
+    goDetail(id);
   });
-}
 
-/* ====== Diff computation (fast pixel diff with smoothing) ======
-  Steps:
-  1) Convert to same size, compute per-pixel absolute RGB difference.
-  2) Collapse to luminance-like value and threshold.
-  3) Simple box blur (N passes) to remove isolated noise.
-  4) Render overlay heatmap + compute % changed.
-  Note: For real-world alignment, use feature-based alignment (OpenCV.js) later.
-*/
-function boxBlurGray(gray, w, h, radius) {
-  if (radius <= 0) return gray;
-  const out = new Uint8ClampedArray(gray.length);
-  const tmp = new Uint16Array(gray.length);
-  const r = radius, size = r*2+1;
+  homeUpload.addEventListener('change', async e=>{
+    const f=e.target.files?.[0]; if(!f) return;
+    const reader=new FileReader();
+    reader.onload=async ()=>{
+      homeLastDataUrl = reader.result;
+      const img = await loadDataUrl(homeLastDataUrl);
+      drawToCanvas(img, homePreview);
+      setHint(homeHint,'Looks good. Tap “Create Snapshot” to save it.');
+    };
+    reader.readAsDataURL(f);
+  });
 
-  // horizontal
-  for (let y=0; y<h; y++) {
-    let acc = 0;
-    let idx = y*w;
-    for (let x=0; x<w; x++) {
-      const add = gray[idx + Math.min(w-1, x+r)];
-      const rmv = gray[idx + Math.max(0, x-r-1)];
-      acc += add - rmv;
-      tmp[idx + x] = acc;
+  btnRestartCamHome.addEventListener('click', ()=>{ stopCamera(homeVideo); startCamera(homeVideo); });
+
+  /************ Detail view logic ************/
+  async function showDetail(id){
+    viewHome.classList.add('hidden');
+    viewDetail.classList.remove('hidden');
+    currentDetail = await dbGetSnapshot(id);
+    if(!currentDetail){ detailTitle.textContent='Snapshot not found'; baselineImg.src=''; return; }
+    detailTitle.textContent = `Snapshot #${currentDetail.id} — ${fmtDate(currentDetail.createdAt)}`;
+    baselineImg.src = currentDetail.dataUrl;
+    compareDataUrl = null;
+    btnStartFlip.disabled = true; btnStopFlip.disabled = true; flipStatus.textContent='';
+    await startCamera(detailVideo); // hidden until Compare is pressed
+    setHint(detailHint,'Press “Compare” to take a new photo with the camera.');
+  }
+  function hideDetail(){
+    stopCamera(detailVideo);
+    stopFlip();
+    compareDataUrl = null;
+  }
+
+  btnBack.addEventListener('click', ()=> goHome());
+
+  btnRestartCamDetail.addEventListener('click', ()=>{ stopCamera(detailVideo); startCamera(detailVideo); });
+
+  detailUpload.addEventListener('change', async e=>{
+    const f=e.target.files?.[0]; if(!f) return;
+    const reader=new FileReader();
+    reader.onload=async ()=>{
+      compareDataUrl = reader.result;
+      await startFlipIfReady();
+    };
+    reader.readAsDataURL(f);
+  });
+
+  btnCompare.addEventListener('click', async ()=>{
+    if (detailVideo.readyState>=2 && detailVideo.videoWidth){
+      compareDataUrl = dataUrlFromVideo(detailVideo);
+      await startFlipIfReady();
+    } else {
+      setHint(detailHint,'Camera not ready. Use Upload instead.');
     }
-    for (let x=0; x<w; x++) {
-      const L = Math.max(0, x-r);
-      const R = Math.min(w-1, x+r);
-      out[idx + x] = Math.round((tmp[idx + R] - (L>0 ? tmp[idx + L-1] : 0)) / size);
+  });
+
+  async function startFlipIfReady(){
+    if (!currentDetail?.dataUrl || !compareDataUrl) return;
+    // Normalize both images to same display size for a clean flip
+    const baseImg = await loadDataUrl(currentDetail.dataUrl);
+    const newImg = await loadDataUrl(compareDataUrl);
+
+    // Choose a target width (the smaller of the two)
+    const targetW = Math.min(baseImg.width, newImg.width, 1400);
+    // Render both to canvases at the same size and get compact dataURLs
+    async function normalize(img){
+      const c=document.createElement('canvas'); const scale=Math.min(1, targetW/img.width);
+      c.width=Math.round(img.width*scale); c.height=Math.round(img.height*scale);
+      c.getContext('2d').drawImage(img,0,0,c.width,c.height);
+      return c.toDataURL('image/jpeg',0.9);
     }
+    const [normBase, normNew] = await Promise.all([normalize(baseImg), normalize(newImg)]);
+    currentDetail._normBase = normBase;
+    compareDataUrl = normNew;
+
+    flipView.src = currentDetail._normBase;
+    btnStartFlip.disabled = false;
+    btnStopFlip.disabled = false;
+    flipStatus.textContent='Ready. Press “Start Flip”.';
   }
 
-  // vertical
-  const out2 = new Uint8ClampedArray(gray.length);
-  for (let x=0; x<w; x++) {
-    let acc = 0;
-    for (let y=0; y<h; y++) {
-      const add = out[Math.min(h-1, y+r)*w + x];
-      const rmv = out[Math.max(0, y-r-1)*w + x];
-      acc += add - rmv;
-      tmp[y*w + x] = acc;
-    }
-    for (let y=0; y<h; y++) {
-      const T = Math.max(0, y-r);
-      const B = Math.min(h-1, y+r);
-      out2[y*w + x] = Math.round((tmp[B*w + x] - (T>0 ? tmp[(T-1)*w + x] : 0)) / size);
-    }
+  function startFlip(){
+    if (flipTimer) return;
+    let showBase=true;
+    flipView.src = showBase ? currentDetail._normBase : compareDataUrl;
+    flipStatus.textContent='Flipping every 1s…';
+    flipTimer = setInterval(()=>{
+      showBase = !showBase;
+      flipView.src = showBase ? currentDetail._normBase : compareDataUrl;
+    }, 1000);
   }
-  return out2;
-}
-
-function computeDiff(baseCtx, newCtx, overlayCtx, threshold=20, blurRadius=2) {
-  const w = baseCtx.canvas.width, h = baseCtx.canvas.height;
-  if (w !== newCtx.canvas.width || h !== newCtx.canvas.height) {
-    status('Sizes differ; resizing comparison image to baseline.', true);
-    const imgData = newCtx.getImageData(0,0,newCtx.canvas.width,newCtx.canvas.height);
-    const tmp = document.createElement('canvas'); tmp.width = w; tmp.height = h;
-    tmp.getContext('2d').putImageData(imgData, 0, 0);
+  function stopFlip(){
+    if (flipTimer){ clearInterval(flipTimer); flipTimer=null; flipStatus.textContent='Stopped.'; }
   }
-  const base = baseCtx.getImageData(0,0,w,h);
-  const cur  = newCtx.getImageData(0,0,w,h);
+  btnStartFlip.addEventListener('click', startFlip);
+  btnStopFlip.addEventListener('click', stopFlip);
 
-  // abs diff -> grayscale energy
-  const diffGray = new Uint8ClampedArray(w*h);
-  let idx=0;
-  for (let i=0; i<base.data.length; i+=4) {
-    const dr = Math.abs(cur.data[i]   - base.data[i]);
-    const dg = Math.abs(cur.data[i+1] - base.data[i+1]);
-    const db = Math.abs(cur.data[i+2] - base.data[i+2]);
-    // perceptual-ish luminance weighting
-    const d = (0.299*dr + 0.587*dg + 0.114*db);
-    diffGray[idx++] = d;
-  }
+  /************ Router boot ************/
+  window.addEventListener('hashchange', ()=>{
+    const r=parseRoute();
+    hideHome(); hideDetail();
+    if(r.view==='home') showHome(); else showDetail(r.id);
+  });
 
-  // blur to suppress speckle noise
-  const blurred = boxBlurGray(diffGray, w, h, blurRadius|0);
-
-  // threshold + overlay render
-  const maskData = overlayCtx.createImageData(w, h);
-  let changed = 0;
-  for (let p=0, q=0; p<blurred.length; p++, q+=4) {
-    const v = blurred[p] >= threshold ? 255 : 0;
-    if (v) changed++;
-    // heatmap-ish red overlay (semi transparent)
-    maskData.data[q]   = v;     // R
-    maskData.data[q+1] = 0;     // G
-    maskData.data[q+2] = 0;     // B
-    maskData.data[q+3] = v ? 140 : 0; // A
-  }
-  overlayCtx.putImageData(maskData, 0, 0);
-
-  const pct = (changed / (w*h)) * 100;
-  return pct;
-}
-
-/* ====== UI glue ====== */
-function status(msg, warn=false) {
-  statusEl.textContent = msg;
-  statusEl.className = 'hint ' + (warn ? 'danger' : '');
-}
-function setScore(pct) {
-  const fmt = pct.toFixed(pct < 10 ? 2 : 1) + '%';
-  scoreEl.textContent = fmt;
-  scoreEl.className = 'score ' + (pct > 5 ? 'danger' : 'ok');
-}
-
-async function refreshBaselineCanvas() {
-  baseDataUrl = await idbGet('baseline');
-  if (!baseDataUrl) { status('No baseline stored yet.'); canvasBase.getContext('2d').clearRect(0,0,canvasBase.width,canvasBase.height); return; }
-  const img = await loadDataUrl(baseDataUrl);
-  drawImageToCanvas(img, canvasBase);
-  status('Baseline loaded.');
-}
-
-async function setBaselineFromDataUrl(url) {
-  await idbSet('baseline', url);
-  await refreshBaselineCanvas();
-}
-
-async function captureToNewCanvas(durl) {
-  const img = await loadDataUrl(durl);
-  drawImageToCanvas(img, canvasNew);
-  // match overlay size to new canvas (which matches baseline)
-  canvasOverlay.width = canvasNew.width;
-  canvasOverlay.height = canvasNew.height;
-  const show = showOverlayEl.checked;
-  canvasOverlay.style.display = show ? 'block' : 'none';
-}
-
-btnCapture.addEventListener('click', async () => {
-  if (video.readyState >= 2 && video.videoWidth) {
-    lastCaptureDataUrl = dataUrlFromVideo(video);
-    await captureToNewCanvas(lastCaptureDataUrl);
-    status('Captured current frame.');
-  } else {
-    status('Camera not ready. Try upload.', true);
-  }
-});
-
-fileInput.addEventListener('change', async (e) => {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async () => {
-    lastCaptureDataUrl = reader.result;
-    await captureToNewCanvas(lastCaptureDataUrl);
-    status('Loaded uploaded image.');
-  };
-  reader.readAsDataURL(file);
-});
-
-btnBaseline.addEventListener('click', async () => {
-  if (!lastCaptureDataUrl) { status('Capture or upload a photo first.', true); return; }
-  await setBaselineFromDataUrl(lastCaptureDataUrl);
-  status('Baseline set.');
-});
-
-btnClear.addEventListener('click', async () => {
-  await idbDel('baseline'); baseDataUrl = null;
-  canvasBase.getContext('2d').clearRect(0,0,canvasBase.width,canvasBase.height);
-  setScore(0); status('Baseline cleared.');
-});
-
-btnCompare.addEventListener('click', async () => {
-  const threshold = +thresholdEl.value;
-  const blur = +blurEl.value;
-  if (!baseDataUrl) { status('No baseline found. Set one first.', true); return; }
-  if (!lastCaptureDataUrl) { status('No current photo to compare. Capture/upload one.', true); return; }
-
-  // Ensure both canvases are same size by drawing both to baseline size
-  const baseImg = await loadDataUrl(baseDataUrl);
-  const curImg  = await loadDataUrl(lastCaptureDataUrl);
-  // Force same target size (use baseline size)
-  drawImageToCanvas(baseImg, canvasBase);
-  drawImageToCanvas(curImg, canvasNew, canvasBase.width);
-
-  canvasOverlay.width = canvasNew.width;
-  canvasOverlay.height = canvasNew.height;
-  const baseCtx = canvasBase.getContext('2d', { willReadFrequently: true });
-  const newCtx  = canvasNew.getContext('2d', { willReadFrequently: true });
-  const overlayCtx = canvasOverlay.getContext('2d');
-
-  const pct = computeDiff(baseCtx, newCtx, overlayCtx, threshold, blur);
-  setScore(pct);
-  canvasOverlay.style.display = showOverlayEl.checked ? 'block' : 'none';
-  status('Comparison done.');
-});
-
-thresholdEl.addEventListener('input', () => {
-  if (baseDataUrl && lastCaptureDataUrl) btnCompare.click();
-});
-blurEl.addEventListener('input', () => {
-  if (baseDataUrl && lastCaptureDataUrl) btnCompare.click();
-});
-showOverlayEl.addEventListener('change', () => {
-  canvasOverlay.style.display = showOverlayEl.checked ? 'block' : 'none';
-});
-
-startCamera();
-refreshBaselineCanvas();
-</script>
+  // First load
+  (async function init(){
+    const r=parseRoute();
+    if(r.view==='home'){ await showHome(); } else { await showDetail(r.id); }
+  })();
+  </script>
 </body>
 </html>
